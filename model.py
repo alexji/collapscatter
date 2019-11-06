@@ -42,6 +42,8 @@ class tjet_distr(stats.rv_continuous):
         ii = t > self.tmin
         out[ii] = 1.0 - (t[ii]/self.tmin)**(1-self.alpha)
         return out
+def generate_tjet(alpha, tmin):
+    return tmin * (np.random.uniform())**(1/(1-alpha))
 
 def run_model(Niter, fjet, Mgas, SFE, yFe, yEu_rate, tmin, alpha):
     print("Niter={}, fjet = {}, Mgas = {:.1e}, SFE = {}".format(Niter, fjet,Mgas,SFE))
@@ -63,7 +65,7 @@ def run_model(Niter, fjet, Mgas, SFE, yFe, yEu_rate, tmin, alpha):
         MEu = 0.0
         N_jet = stats.poisson.rvs(N_SN*fjet)
         for j in range(N_jet):
-            MEu += yEu_rate * default_tjet.rvs()
+            MEu += yEu_rate * generate_tjet(alpha, tmin) #default_tjet.rvs()
         MEu_array[i] = MEu
         NSN_array[i] = N_SN
         Njet_array[i] = N_jet
@@ -75,9 +77,9 @@ def run_model(Niter, fjet, Mgas, SFE, yFe, yEu_rate, tmin, alpha):
 
     return EuFe, FeH, NSN_array, Njet_array
 
-#if __name__ == "__main__":
-def plot_first_model():
-    Niter = 1000
+if __name__ == "__main__":
+#def plot_first_model():
+    Niter = 10000
     fjet0 = 0.01
     Mgas0 = 10**7 # Msun
     SFE0 = 0.002 # Ratio of Mstar/Mgas
@@ -105,6 +107,7 @@ def plot_first_model():
         ax.plot(np.sort(EuFe), (np.arange(EuFe.size)+1)/EuFe.size, label="tmin "+str(tmin))
         print_stuff(FeH, EuFe, NSN_array, Njet_array)
     ax.legend(); ax.set_xlim(-2,3); ax.set_ylim(0,1)
+    ax.set_ylabel("CDF")
     
     ax = axes[0,1]
     ax.plot(star_eufe, (np.arange(star_eufe.size)+1)/star_eufe.size, 'k-', label="Stars")
@@ -121,6 +124,7 @@ def plot_first_model():
         ax.plot(np.sort(EuFe), (np.arange(EuFe.size)+1)/EuFe.size, label="alpha "+str(alpha))
         print_stuff(FeH, EuFe, NSN_array, Njet_array)
     ax.legend(); ax.set_xlim(-2,3); ax.set_ylim(0,1)
+    ax.set_xlabel("[Eu/Fe]"); ax.set_ylabel("CDF")
     
     ax = axes[1,1]
     ax.plot(star_eufe, (np.arange(star_eufe.size)+1)/star_eufe.size, 'k-', label="Stars")
@@ -129,13 +133,15 @@ def plot_first_model():
         ax.plot(np.sort(EuFe), (np.arange(EuFe.size)+1)/EuFe.size, label="logMgas "+str(np.log10(Mgas)))
         print_stuff(FeH, EuFe, NSN_array, Njet_array)
     ax.legend(); ax.set_xlim(-2,3); ax.set_ylim(0,1)
+    ax.set_xlabel("[Eu/Fe]")
     
     fig.tight_layout()
     fig.subplots_adjust(top=.9)
     fig.savefig("first_model.png", bbox_inches="tight")
     plt.show()
     
-if __name__ == "__main__":
+#if __name__ == "__main__":
+def tmp():
     Niter = 100
     fjet0 = 1.0
     Mgas0 = 10**6 # Msun
