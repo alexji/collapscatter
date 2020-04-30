@@ -14,6 +14,65 @@ from scipy import stats
 
 from alexmods import read_data as rd
 
+def power_law_cdf(logxmin,logxmax,alpha,N=100):
+    """ CDF for p(x) ~ x^-alpha from xmin to xmax """
+    xvals = np.logspace(logxmin,logxmax,N)
+    xmin, xmax = 10**logxmin, 10**logxmax
+    return np.log10(xvals), ((xvals/xmin)**(1-alpha) - 1)/((xmax/xmin)**(1-alpha) - 1)
+def load_star_eufe_feh(fehmin,fehmax,eufemin=-2.0):
+    halo = rd.load_halo()
+    halo["[Ba/Eu]"] = halo["[Ba/H]"] - halo["[Eu/H]"]
+    
+    ii1 = (pd.notnull(halo["[Eu/Fe]"]) & (~halo["uleu"]) & (halo["[Fe/H]"] < fehmax) & (halo["[Fe/H]"] > fehmin) & (halo["[Ba/Eu]"] < -0.4) & (~halo["ulba"]))
+    # All Eu limits that have a useful Ba measurement
+    ii2 = ((halo["[Eu/Fe]"] < 0) & (halo["uleu"]) & (halo["[Fe/H]"] < fehmax) & (halo["[Fe/H]"] > fehmin) & (halo["[Ba/Eu]"] < -0.4) & (~halo["ulba"]))
+    ## TODO this ii2 is not really the right thing to do. Need survival statistics to really compare.
+    ii = ii1 | ii2
+    print("{} < [Fe/H] < {}".format(fehmin,fehmax))
+    print("Num stars = {}".format(ii.sum()))
+    print("Num measured = {}".format(ii1.sum()))
+    print("Num limits = {}".format(ii2.sum()))
+    print("Setting [Eu/Fe] < 0 to have [Eu/Fe] = {}".format(eufemin)) 
+    halo.loc[ii2,"[Eu/Fe]"] = eufemin
+    star_eufe = np.array(halo["[Eu/Fe]"][ii])
+    star_feh = np.array(halo["[Fe/H]"][ii])
+    iisort = np.argsort(star_eufe)
+    return star_eufe[iisort], star_feh[iisort], (np.arange(star_eufe.size)+1)/star_eufe.size
+def load_star_eufe_with_limits(fehmin,fehmax):
+    halo = rd.load_halo()
+    halo["[Ba/Eu]"] = halo["[Ba/H]"] - halo["[Eu/H]"]
+    
+    ii = (pd.notnull(halo["[Eu/Fe]"]) & (halo["[Fe/H]"] < fehmax) & (halo["[Fe/H]"] > fehmin) & (halo["[Ba/Eu]"] < -0.4) & (~halo["ulba"]))
+    star_eufe = np.array(halo["[Eu/Fe]"][ii])
+    star_feh = np.array(halo["[Fe/H]"][ii])
+    star_eulim = np.array(halo["uleu"][ii])
+    return star_eufe, star_eulim, star_feh
+
+def load_star_eufe():
+    halo = rd.load_halo()
+    halo["[Ba/Eu]"] = halo["[Ba/H]"] - halo["[Eu/H]"]
+    # All Eu measurements
+    ii1 = (pd.notnull(halo["[Eu/Fe]"]) & (~halo["uleu"]) & (halo["[Fe/H]"] < -2.5) & (halo["[Ba/Eu]"] < -0.4) & (~halo["ulba"]))
+    # All Eu limits that have a useful Ba measurement
+    ii2 = ((halo["[Eu/Fe]"] < 0) & (halo["uleu"]) & (halo["[Fe/H]"] < -2.5) & (halo["[Ba/Eu]"] < -0.4) & (~halo["ulba"]))
+    ii = ii1 | ii2
+    print("Num stars = {}".format(ii.sum()))
+    print("Num measured = {}".format(ii1.sum()))
+    print("Num limits = {}".format(ii2.sum()))
+    halo.loc[ii2,"[Eu/Fe]"] = -2
+    star_eufe = np.sort(halo["[Eu/Fe]"][ii])
+    return star_eufe
+    
+    """
+    halo = rd.load_halo()
+    halo["[Ba/Eu]"] = halo["[Ba/H]"] - halo["[Eu/H]"]
+    ii = (pd.notnull(halo["[Eu/Fe]"]) & (~halo["uleu"]) & (halo["[Fe/H]"] < -2.5) & (halo["[Ba/Eu]"] < -0.4) & (~halo["ulba"]))
+    print("Num stars = {}".format(ii.sum()))
+    star_eufe = np.sort(halo["[Eu/Fe]"][ii])
+    """
+if __name__=="__main__":
+    star_eufe = load_star_eufe()
+
 
 def MEuMFe_to_EuFe(MEu, MFe):
     muEu = 152.
@@ -42,12 +101,32 @@ class tjet_distr(stats.rv_continuous):
         ii = t > self.tmin
         out[ii] = 1.0 - (t[ii]/self.tmin)**(1-self.alpha)
         return out
-def generate_tjet(alpha, tmin):
-    return tmin * (np.random.uniform())**(1/(1-alpha))
+def generate_tjet(alpha, tmin, size=1):
+    """ Draw from power law if alpha > 1 """
+    return tmin * (np.random.uniform(size=size))**(1/(1-alpha))
 
-def run_model(Niter, fjet, Mgas, SFE, yFe, yEu_rate, tmin, alpha):
+def run_Nr_model(Niter, Nr, alpha, tmin=1):
+    """
+    Run a model that is just a stochastic set of draws.
+    
+    Note that tmin is degenerate with the overall normalization (if alpha > 2)
+    So after taking log(Mr), you can shift it left and right arbitrarily.
+    """
+    Nrs = stats.poisson.rvs(Nr, size=Niter)
+    total_Nr = np.sum(Nrs)
+    Mrs = generate_tjet(alpha, tmin, size=total_Nr)
+    i1, i2 = 0, 0
+    total_Mrs = np.zeros(Niter)
+    for i in range(Niter):
+        i1 = i2; i2 = i2 + Nrs[i]
+        total_Mrs[i] = np.sum(Mrs[i1:i2])
+    return total_Mrs
+
+def run_model(Niter, fjet, Mgas, SFE, yFe, yEu_rate, tmin, alpha,
+              EuFe_min = -2):
     print("Niter={}, fjet = {}, Mgas = {:.1e}, SFE = {}".format(Niter, fjet,Mgas,SFE))
     print("yFe = {}, yEu at 300s = {:.2e}".format(yFe, yEu_rate*300))
+    print("tmin = {}, alpha={}".format(tmin, alpha))
     Mstar = Mgas * SFE
     SN_to_Mass = 1/0.009 # Salpeter IMF
     Mass_to_SN = 0.009 # Salpeter IMF
@@ -70,7 +149,6 @@ def run_model(Niter, fjet, Mgas, SFE, yFe, yEu_rate, tmin, alpha):
         NSN_array[i] = N_SN
         Njet_array[i] = N_jet
     EuFe = MEuMFe_to_EuFe(MEu_array,MFe_array)
-    EuFe_min = -2
     EuFe[np.isinf(EuFe)] = EuFe_min
     FeH = MFeMH_to_FeH(MFe_array,Mgas*0.75)
     print("took {:.1f}s".format(time.time()-start))
@@ -90,12 +168,6 @@ if __name__ == "__main__":
     #EuFe, FeH, NSN_array, Njet_array = run_model(100, fjet, Mgas, SFE, yFe, yEu_rate, tmin, alpha)
     
     np.random.seed(23459870)
-    
-    halo = rd.load_halo()
-    halo["[Ba/Eu]"] = halo["[Ba/H]"] - halo["[Eu/H]"]
-    ii = (pd.notnull(halo["[Eu/Fe]"]) & (~halo["uleu"]) & (halo["[Fe/H]"] < -2.5) & (halo["[Ba/Eu]"] < -0.4) & (~halo["ulba"]))
-    print("Num stars = {}".format(ii.sum()))
-    star_eufe = np.sort(halo["[Eu/Fe]"][ii])
     
     fig, axes = plt.subplots(2,2,figsize=(8,8))
     fig.suptitle("fjet={} logMgas={} SFE={} yFe={}\nyEu/t={:.1e} tmin={} alpha={}".format(
@@ -153,12 +225,6 @@ def tmp():
     #EuFe, FeH, NSN_array, Njet_array = run_model(100, fjet, Mgas, SFE, yFe, yEu_rate, tmin, alpha)
     
     np.random.seed(23459870)
-    
-    halo = rd.load_halo()
-    halo["[Ba/Eu]"] = halo["[Ba/H]"] - halo["[Eu/H]"]
-    ii = (pd.notnull(halo["[Eu/Fe]"]) & (~halo["uleu"]) & (halo["[Fe/H]"] < -2.5) & (halo["[Ba/Eu]"] < -0.4) & (~halo["ulba"]))
-    print("Num stars = {}".format(ii.sum()))
-    star_eufe = np.sort(halo["[Eu/Fe]"][ii])
     
     fig, ax = plt.subplots()
     ax.plot(star_eufe, (np.arange(star_eufe.size)+1)/star_eufe.size, 'k-', label="Stars")
